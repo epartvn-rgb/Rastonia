@@ -1,0 +1,175 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>Ralstonia Web App – Tự động cập nhật</title>
+<style>
+  /* ... (Toàn bộ CSS giữ nguyên như phiên bản v8, có thể tái sử dụng) ... */
+  :root{--bg:#f4f7f6;--surface:#ffffff;--text:#1b2a30;--muted:#5f727a;--primary:#0d5c4d;--primary-light:#e6f4f0;--accent:#b03a2e;--accent-light:#fdecea;--border:#d8e3df;--shadow:0 2px 10px rgba(0,0,0,.05);--radius:12px;}
+  body.dark{--bg:#0d171c;--surface:#152229;--text:#e4efec;--muted:#93a8b0;--primary:#4cc9b0;--primary-light:#1a3733;--accent:#f1948a;--accent-light:#3a1f1c;--border:#273b42;--shadow:0 2px 10px rgba(0,0,0,.3);}
+  *{box-sizing:border-box;} body{margin:0;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;background:var(--bg);color:var(--text);line-height:1.65;font-size:15px;transition:background .2s,color .2s;}
+  header{background:linear-gradient(135deg,#0d5c4d,#1a7a66);color:#fff;padding:1.8rem 1rem 1.4rem;} header h1{margin:0 0 .2rem;font-size:1.45rem;} header p{margin:0;font-size:.85rem;opacity:.92;}
+  .update-panel{background:var(--surface);border-bottom:1px solid var(--border);padding:.6rem .9rem;display:flex;align-items:center;gap:.6rem;flex-wrap:wrap;}
+  .update-btn{background:var(--primary);color:#fff;border:none;border-radius:20px;padding:.45rem .9rem;font-size:.82rem;font-weight:600;cursor:pointer;display:flex;align-items:center;gap:.3rem;transition:opacity .15s;}
+  .update-btn:hover{opacity:.85;} .update-btn:disabled{opacity:.5;cursor:not-allowed;}
+  .update-status{font-size:.78rem;color:var(--muted);flex:1;min-width:150px;} .update-status.success{color:var(--primary);font-weight:600;} .update-status.error{color:var(--accent);font-weight:600;}
+  main{max-width:1100px;margin:auto;padding:.8rem .8rem 3rem;}
+  section{margin-bottom:2rem;} h2{font-size:1.18rem;color:var(--primary);margin:0 0 .8rem;padding-left:.55rem;border-left:4px solid var(--primary);} h3{font-size:1rem;margin:1.2rem 0 .5rem;}
+  .card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:1rem 1.1rem;margin-bottom:.8rem;box-shadow:var(--shadow);}
+  .card h4{margin:0 0 .3rem;font-size:.92rem;color:var(--primary);} .card p,.card li{font-size:.87rem;margin:.3rem 0;} .card ul{padding-left:1.15rem;margin:.3rem 0;}
+  .tag{display:inline-block;font-size:.65rem;font-weight:700;padding:.08rem .4rem;border-radius:8px;margin-right:.2rem;margin-bottom:.15rem;background:var(--primary-light);color:var(--primary);}
+  .explication{font-size:.84rem;color:var(--muted);margin-top:.4rem;padding-top:.4rem;border-top:1px dashed var(--border);}
+  .loading{text-align:center;padding:2rem;color:var(--muted);}
+  .hidden{display:none!important;}
+  @media(min-width:720px){.card-grid{display:grid;grid-template-columns:1fr 1fr;gap:.7rem;}.card-grid .card{margin-bottom:0;}}
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Ralstonia Web App</h1>
+  <p>Cơ sở dữ liệu RSSC – Tự động đồng bộ từ máy chủ trung tâm</p>
+  <span id="lastUpdatedBadge" style="display:inline-block;background:rgba(255,255,255,.18);border-radius:20px;padding:.15rem .65rem;font-size:.72rem;font-weight:600;margin-top:.45rem;">Đang kết nối...</span>
+</header>
+
+<div class="update-panel">
+  <button class="update-btn" id="updateBtn" onclick="loadData(true)">🔄 Đồng bộ ngay</button>
+  <span class="update-status" id="updateStatus">Đang chờ dữ liệu từ máy chủ...</span>
+</div>
+
+<main id="appContent">
+  <div class="loading">⏳ Đang tải dữ liệu khoa học mới nhất...</div>
+</main>
+
+<script>
+// ============================================================
+// CẤU HÌNH ỨNG DỤNG WEB
+// ============================================================
+// URL trỏ đến tệp data.json được lưu trữ trực tuyến.
+// Thay thế bằng URL thực tế của bạn.
+const DATA_URL = 'https://raw.githubusercontent.com/your-username/ralstonia-data/main/data.json';
+
+// Tần suất tự động kiểm tra (mili giây). 5 phút = 300000ms.
+// Đặt thành 0 để tắt tự động cập nhật.
+const AUTO_REFRESH_INTERVAL = 300000;
+
+let autoRefreshTimer = null;
+
+// ============================================================
+// HÀM CHÍNH: TẢI VÀ HIỂN THỊ DỮ LIỆU
+// ============================================================
+async function loadData(manual = false) {
+  const btn = document.getElementById('updateBtn');
+  const status = document.getElementById('updateStatus');
+  const badge = document.getElementById('lastUpdatedBadge');
+  const content = document.getElementById('appContent');
+
+  if (btn.disabled) return;
+  btn.disabled = true;
+  btn.textContent = '⏳ Đang tải...';
+  status.className = 'update-status';
+  status.textContent = 'Đang kết nối máy chủ dữ liệu...';
+
+  try {
+    // Thêm timestamp để tránh cache của trình duyệt
+    const url = DATA_URL + '?t=' + Date.now();
+    const response = await fetch(url, { cache: 'no-store' });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+
+    const data = await response.json();
+
+    // 1. Hiển thị nội dung
+    renderApp(data, content);
+
+    // 2. Cập nhật trạng thái
+    const now = new Date().toLocaleString('vi-VN');
+    badge.textContent = 'Cập nhật: ' + now;
+    status.className = 'update-status success';
+    status.textContent = `✅ Đã đồng bộ thành công lúc ${now}`;
+
+  } catch (error) {
+    console.error('[Web App] Lỗi tải dữ liệu:', error);
+    status.className = 'update-status error';
+    status.textContent = `❌ Lỗi: ${error.message}. (URL: ${DATA_URL})`;
+    if (content.querySelector('.loading')) {
+      content.innerHTML = `<div class="loading" style="color:var(--accent);">❌ Không thể tải dữ liệu. Vui lòng kiểm tra URL của tệp <code>data.json</code>.</div>`;
+    }
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '🔄 Đồng bộ ngay';
+  }
+}
+
+// ============================================================
+// HÀM RENDER GIAO DIỆN TỪ DỮ LIỆU JSON
+// ============================================================
+function renderApp(data, container) {
+  let html = '';
+
+  // Duyệt qua từng phần (section) trong dữ liệu
+  data.sections.forEach(section => {
+    html += `<section><h2>${section.title}</h2>`;
+
+    if (section.description) {
+      html += `<p class="explication" style="margin-bottom:1rem;">${section.description}</p>`;
+    }
+
+    // Duyệt qua từng thẻ (card) trong section
+    section.cards.forEach(card => {
+      html += `<div class="card">`;
+      html += `<h4>${card.tags ? card.tags.map(t => `<span class="tag">#${t}</span>`).join(' ') : ''} ${card.title}</h4>`;
+      if (card.body) html += `<p>${card.body}</p>`;
+      if (card.list) {
+        html += `<ul>${card.list.map(li => `<li>${li}</li>`).join('')}</ul>`;
+      }
+      if (card.explication) {
+        html += `<div class="explication"><strong>Thuyết minh:</strong> ${card.explication}</div>`;
+      }
+      if (card.source) {
+        html += `<div class="explication" style="font-size:.78rem;">Nguồn: ${card.source}</div>`;
+      }
+      html += `</div>`;
+    });
+
+    html += `</section>`;
+  });
+
+  container.innerHTML = html;
+}
+
+// ============================================================
+// CƠ CHẾ TỰ ĐỘNG CẬP NHẬT
+// ============================================================
+function startAutoRefresh() {
+  if (AUTO_REFRESH_INTERVAL > 0) {
+    autoRefreshTimer = setInterval(() => {
+      // Chỉ tự động cập nhật nếu tab đang được xem
+      if (document.visibilityState === 'visible') {
+        loadData(false); // false = không phải thao tác thủ công
+      }
+    }, AUTO_REFRESH_INTERVAL);
+  }
+}
+
+// Dừng tự động cập nhật khi tab bị ẩn (tùy chọn, để tiết kiệm tài nguyên)
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') {
+    // Khi quay lại tab, có thể kiểm tra ngay một lần
+    // loadData(false);
+  }
+});
+
+// Khởi chạy ứng dụng
+window.addEventListener('load', () => {
+  loadData(); // Tải lần đầu
+  startAutoRefresh(); // Bắt đầu chu kỳ tự động
+});
+
+window.addEventListener('beforeunload', () => {
+  if (autoRefreshTimer) clearInterval(autoRefreshTimer);
+});
+</script>
+
+</body>
+</html>
